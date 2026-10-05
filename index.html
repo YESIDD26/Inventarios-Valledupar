@@ -163,15 +163,13 @@
               <th class="px-4 py-3">Referencia</th>
               <th class="px-4 py-3">Detalle / Descripción</th>
               <th class="px-4 py-3">Marca</th>
-              <th class="px-4 py-3">Sede</th>
-              <th class="px-4 py-3">Bodega</th>
               <th class="px-4 py-3 text-right">Cantidad</th>
               <th class="px-4 py-3 text-center">Tarifa IVA</th>
             </tr>
           </thead>
           <tbody id="tableBody" class="divide-y divide-slate-100 bg-white">
             <tr>
-              <td colspan="7" class="text-center py-8 text-slate-400">Cargando datos desde Google Sheets...</td>
+              <td colspan="5" class="text-center py-8 text-slate-400">Cargando datos desde Google Sheets...</td>
             </tr>
           </tbody>
         </table>
@@ -183,11 +181,8 @@
   <script>
     const API_URL = "https://script.google.com/macros/s/AKfycbw_7Kqupkzb8O2vCKZOGYq6Cx2MKZ-Gd5HZA6YGlnu8zAVFOUhWL0pRg_6Dp6CWwhCq/exec";
     
-    // Lista explícita con solo las bodegas de Valledupar
-    const BODEGAS_PERMITIDAS = [
-      "VALLEDUPAR",
-      "B2B VALLEDUPAR"
-    ];
+    // Set optimizado para búsquedas ultrarrápidas
+    const BODEGAS_PERMITIDAS = new Set(["VALLEDUPAR", "B2B VALLEDUPAR"]);
 
     let inventoryData = [];
     let barChartInst = null;
@@ -199,7 +194,7 @@
       
       if (icon) icon.classList.add('fa-spin');
       if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Cargando datos desde Google Sheets...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Cargando datos desde Google Sheets...</td></tr>';
       }
 
       try {
@@ -215,55 +210,70 @@
         const rawData = await response.json();
 
         if (Array.isArray(rawData)) {
-          // Mapeo y filtrado exclusivo para las bodegas de Valledupar
-          inventoryData = rawData
-            .map(item => {
+          // Procesamiento en un solo paso
+          const processed = [];
+          
+          for (let i = 0; i < rawData.length; i++) {
+            const item = rawData[i];
+            const bodegaVal = String(item["Bodega"] || item["CONS BODEG"] || "").trim();
+            
+            // Validación directa con el Set
+            if (BODEGAS_PERMITIDAS.has(bodegaVal.toUpperCase())) {
               const cant = Number(item["Cantid"] !== undefined ? item["Cantid"] : (item["Cantidad"] || 0));
-              const bodegaVal = String(item["Bodega"] || item["CONS BODEG"] || "").trim();
-              const consBodegaVal = String(item["CONS BODEG"] || item["Bodega"] || "").trim();
+              const ref = String(item["Referencia"] || item["Ref2"] || "000000");
+              const detalle = String(item["Detalle"] || "");
+              const marca = String(item["Marca"] || "OTRAS");
+              const porcentajeIva = String(item["Porcentaje i"] || item["Porcentaje iva"] || "0");
               const tarifaIvaVal = String(item["Tarifa de iva"] || item["Tarifa iva"] || "EXENTO").trim();
 
-              return {
-                ref: String(item["Referencia"] || item["Ref2"] || "000000"),
-                detalle: String(item["Detalle"] || ""),
-                marca: String(item["Marca"] || "OTRAS"),
-                codMarca: String(item["Cod.Ma"] || item["Cod.Marca"] || ""),
+              const isExento = tarifaIvaVal === "1" || porcentajeIva === "0" || tarifaIvaVal.toUpperCase().includes("EXENTO");
+
+              processed.push({
+                ref,
+                detalle,
+                marca,
                 sede: bodegaVal,
-                consBodega: consBodegaVal,
                 cantidad: isNaN(cant) ? 0 : cant,
-                porcentajeIva: String(item["Porcentaje i"] || item["Porcentaje iva"] || "0"),
-                iva: tarifaIvaVal
-              };
-            })
-            // Filtro estricto exclusivo para VALLEDUPAR y B2B VALLEDUPAR
-            .filter(item => BODEGAS_PERMITIDAS.some(b => b.toLowerCase() === item.sede.toLowerCase()));
+                isExento,
+                // Indice precalculado en minúsculas para acelerar la búsqueda por texto
+                searchIndex: `${ref} ${detalle} ${marca}`.toLowerCase()
+              });
+            }
+          }
+
+          inventoryData = processed;
 
           populateSelectOptions();
           applyFilters();
         } else {
           console.error("Respuesta no válida de Apps Script:", rawData);
-          tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6 text-red-500 font-semibold">Error al obtener los datos. Verifica que la respuesta de Apps Script sea un arreglo JSON válido.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center py-6 text-red-500 font-semibold">Error al obtener los datos. Verifica que la respuesta de Apps Script sea un arreglo JSON válido.</td></tr>';
         }
       } catch (error) {
         console.error("Error al obtener los datos:", error);
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6 text-red-500 font-semibold">No se pudo conectar con Google Sheets. Verifica los permisos de acceso de Apps Script.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-6 text-red-500 font-semibold">No se pudo conectar con Google Sheets. Verifica los permisos de acceso de Apps Script.</td></tr>';
       } finally {
         if (icon) icon.classList.remove('fa-spin');
       }
     }
 
     function populateSelectOptions() {
-      const sedes = [...new Set(inventoryData.map(d => d.sede).filter(Boolean))].sort();
-      const marcas = [...new Set(inventoryData.map(d => d.marca).filter(Boolean))].sort();
+      const sedes = new Set();
+      const marcas = new Set();
+
+      for (let i = 0; i < inventoryData.length; i++) {
+        if (inventoryData[i].sede) sedes.add(inventoryData[i].sede);
+        if (inventoryData[i].marca) marcas.add(inventoryData[i].marca);
+      }
 
       const selectBodega = document.getElementById('selectBodega');
       const selectMarca = document.getElementById('selectMarca');
 
       selectBodega.innerHTML = '<option value="">Todas las Bodegas Valledupar</option>' + 
-        sedes.map(s => `<option value="${s}">${s}</option>`).join('');
+        Array.from(sedes).sort().map(s => `<option value="${s}">${s}</option>`).join('');
 
       selectMarca.innerHTML = '<option value="">Todas las Marcas</option>' + 
-        marcas.map(m => `<option value="${m}">${m}</option>`).join('');
+        Array.from(marcas).sort().map(m => `<option value="${m}">${m}</option>`).join('');
     }
 
     function applyFilters() {
@@ -272,85 +282,85 @@
       const selectedIva = document.getElementById('selectIva').value;
       const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
 
-      const filtered = inventoryData.filter(item => {
-        const matchSede = !selectedSede || item.sede === selectedSede;
-        const matchMarca = !selectedMarca || item.marca === selectedMarca;
+      const filtered = [];
+
+      for (let i = 0; i < inventoryData.length; i++) {
+        const item = inventoryData[i];
+
+        if (selectedSede && item.sede !== selectedSede) continue;
+        if (selectedMarca && item.marca !== selectedMarca) continue;
         
-        let matchIva = true;
-        if (selectedIva === "EXENTO") {
-          matchIva = item.iva === "1" || item.porcentajeIva === "0" || item.iva.toUpperCase().includes("EXENTO");
-        } else if (selectedIva === "GRAVADO") {
-          matchIva = item.iva === "19" || item.porcentajeIva === "19" || item.iva.toUpperCase().includes("19");
-        }
+        if (selectedIva === "EXENTO" && !item.isExento) continue;
+        if (selectedIva === "GRAVADO" && item.isExento) continue;
 
-        const matchSearch = !searchTerm || 
-          item.ref.toLowerCase().includes(searchTerm) || 
-          item.detalle.toLowerCase().includes(searchTerm) ||
-          item.marca.toLowerCase().includes(searchTerm) ||
-          item.sede.toLowerCase().includes(searchTerm) ||
-          item.consBodega.toLowerCase().includes(searchTerm);
+        // Búsqueda acelerada con el índice precalculado
+        if (searchTerm && !item.searchIndex.includes(searchTerm)) continue;
 
-        return matchSede && matchMarca && matchIva && matchSearch;
-      });
+        filtered.push(item);
+      }
 
       updateKPIs(filtered);
       renderTable(filtered);
       renderCharts(filtered);
     }
 
-    // Función encargada de actualizar los contadores superiores (KPIs)
     function updateKPIs(data) {
-      const totalUnits = data.reduce((acc, curr) => acc + curr.cantidad, 0);
-      const totalRecords = data.length;
-      const activeSedes = new Set(data.map(d => d.sede).filter(Boolean)).size;
-      const registeredBrands = new Set(data.map(d => d.marca).filter(Boolean)).size;
+      let totalUnits = 0;
+      const activeSedes = new Set();
+      const registeredBrands = new Set();
+
+      for (let i = 0; i < data.length; i++) {
+        totalUnits += data[i].cantidad;
+        if (data[i].sede) activeSedes.add(data[i].sede);
+        if (data[i].marca) registeredBrands.add(data[i].marca);
+      }
 
       document.getElementById('kpiUnidades').innerText = totalUnits.toLocaleString();
-      document.getElementById('kpiRegistros').innerText = totalRecords.toLocaleString();
-      document.getElementById('kpiSedes').innerText = activeSedes;
-      document.getElementById('kpiMarcas').innerText = registeredBrands;
+      document.getElementById('kpiRegistros').innerText = data.length.toLocaleString();
+      document.getElementById('kpiSedes').innerText = activeSedes.size;
+      document.getElementById('kpiMarcas').innerText = registeredBrands.size;
     }
 
     function renderTable(data) {
       const tbody = document.getElementById('tableBody');
 
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6 text-slate-400">No se encontraron registros para las bodegas de Valledupar.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-6 text-slate-400">No se encontraron registros para las bodegas de Valledupar.</td></tr>';
         return;
       }
 
-      const rowsHtml = data.map(item => {
-        const isExento = item.iva === "1" || item.porcentajeIva === "0" || item.iva.toUpperCase().includes('EXENTO');
-        const ivaBadge = isExento 
-          ? '<span class="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700 tracking-wide">EXENTO</span>'
-          : '<span class="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 tracking-wide">GRAVADO AL 19%</span>';
+      // Renderizado mediante string buffer más limpio y rápido
+      let htmlContent = '';
+      const badgeExento = '<span class="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700 tracking-wide">EXENTO</span>';
+      const badgeGravado = '<span class="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 tracking-wide">GRAVADO AL 19%</span>';
 
-        return `
+      for (let i = 0; i < data.length; i++) {
+        const item = data[i];
+        htmlContent += `
           <tr class="hover:bg-slate-50 transition-colors">
             <td class="px-4 py-3 font-semibold text-slate-700">${item.ref}</td>
             <td class="px-4 py-3 font-medium text-slate-800">${item.detalle}</td>
             <td class="px-4 py-3">
               <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium text-[11px]">${item.marca}</span>
             </td>
-            <td class="px-4 py-3 text-slate-600 font-medium">${item.sede}</td>
-            <td class="px-4 py-3 text-slate-500 font-mono text-[11px]">${item.consBodega}</td>
             <td class="px-4 py-3 text-right font-bold text-slate-800">${item.cantidad.toLocaleString()}</td>
-            <td class="px-4 py-3 text-center">${ivaBadge}</td>
+            <td class="px-4 py-3 text-center">${item.isExento ? badgeExento : badgeGravado}</td>
           </tr>
         `;
-      }).join('');
+      }
 
-      tbody.innerHTML = rowsHtml;
+      tbody.innerHTML = htmlContent;
     }
 
     function renderCharts(data) {
       const sedeGroup = {};
       const marcaGroup = {};
 
-      data.forEach(d => {
+      for (let i = 0; i < data.length; i++) {
+        const d = data[i];
         if (d.sede) sedeGroup[d.sede] = (sedeGroup[d.sede] || 0) + d.cantidad;
         if (d.marca) marcaGroup[d.marca] = (marcaGroup[d.marca] || 0) + d.cantidad;
-      });
+      }
 
       const ctxBar = document.getElementById('barChart').getContext('2d');
       if (barChartInst) barChartInst.destroy();
