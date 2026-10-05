@@ -298,6 +298,7 @@
       renderCharts(filtered);
     }
 
+    // Función encargada de actualizar los contadores superiores (KPIs)
     function updateKPIs(data) {
       const totalUnits = data.reduce((acc, curr) => acc + curr.cantidad, 0);
       const totalRecords = data.length;
